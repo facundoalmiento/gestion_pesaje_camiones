@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS Estaciones (
     nombre VARCHAR(100) NOT NULL
 );
 
+
 -- Tabla Camiones
 CREATE TABLE IF NOT EXISTS Camiones (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -113,8 +114,162 @@ JOIN
     Estaciones e ON p.estacion_id = e.id
 GROUP BY 
     e.nombre;
-    
-    
-    
-    
-    
+
+USE gestion_pesaje_camiones;
+
+CREATE TABLE Conductores (
+  id_conductor INT PRIMARY KEY AUTO_INCREMENT,
+  nombre VARCHAR(50),
+  dni VARCHAR(20),
+  telefono VARCHAR(20)
+);
+CREATE TABLE Empresas (
+  id_empresa INT PRIMARY KEY AUTO_INCREMENT,
+  nombre_empresa VARCHAR(100),
+  cuit VARCHAR(20)
+);
+CREATE TABLE CategoriasCamiones (
+  id_categoria INT PRIMARY KEY AUTO_INCREMENT,
+  descripcion VARCHAR(100),
+  max_peso_total DECIMAL(10,2)
+);
+CREATE TABLE UsuariosEstacion (
+  id_usuario INT PRIMARY KEY AUTO_INCREMENT,
+  nombre VARCHAR(50),
+  rol VARCHAR(50),
+  turno VARCHAR(20)
+);
+
+CREATE TABLE IF NOT EXISTS Mantenimientos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    fecha DATE NOT NULL,
+    descripcion TEXT,
+    id_estacion INT,
+    FOREIGN KEY (id_estacion) REFERENCES Estaciones(id)
+);
+CREATE TABLE Normativas (
+  id_normativa INT PRIMARY KEY AUTO_INCREMENT,
+  cantidad_ejes INT,
+  peso_maximo_permitido DECIMAL(10,2)
+);
+CREATE TABLE Alertas (
+  id_alerta INT PRIMARY KEY AUTO_INCREMENT,
+  patente VARCHAR(20),
+  fecha DATE,
+  motivo VARCHAR(100)
+);
+CREATE TABLE IngresosEconomicos (
+  id_ingreso INT PRIMARY KEY AUTO_INCREMENT,
+  id_sancion INT,
+  monto DECIMAL(10,2),
+  fecha DATE,
+  FOREIGN KEY (id_sancion) REFERENCES Sanciones(id)
+);
+CREATE TABLE TiposSanciones (
+  id_tipo_sancion INT PRIMARY KEY AUTO_INCREMENT,
+  descripcion VARCHAR(100),
+  monto_base DECIMAL(10,2)
+);
+CREATE TABLE Auditorias (
+  id_auditoria INT PRIMARY KEY AUTO_INCREMENT,
+  tabla_afectada VARCHAR(50),
+  id_usuario INT,
+  fecha_hora DATETIME,
+  accion VARCHAR(20)
+);
+
+DELIMITER //
+CREATE FUNCTION TotalSancionesCamion(camionPatente VARCHAR(10))
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+  DECLARE total DECIMAL(10,2);
+  SELECT SUM(s.monto) INTO total
+  FROM Sanciones s
+  JOIN Pesajes p ON s.pesaje_id = p.id
+  JOIN Camiones c ON p.camion_id = c.id
+  WHERE c.patente = camionPatente;
+  RETURN IFNULL(total, 0);
+END //
+DELIMITER ;
+DELIMITER //
+CREATE FUNCTION ContarAlertas(pat VARCHAR(10))
+RETURNS INT
+DETERMINISTIC
+BEGIN
+  DECLARE total INT;
+  SELECT COUNT(*) INTO total FROM Alertas WHERE patente = pat;
+  RETURN total;
+END //
+DELIMITER ;
+DELIMITER //
+CREATE PROCEDURE InsertarAlertaExcesoPeso(IN pesajeId INT)
+BEGIN
+  DECLARE patenteCamion VARCHAR(10);
+  DECLARE fechaActual DATE;
+  SELECT c.patente, p.fecha INTO patenteCamion, fechaActual
+  FROM Pesajes p
+  JOIN Camiones c ON p.camion_id = c.id
+  WHERE p.id = pesajeId AND p.exceso_peso = TRUE;
+  
+  IF patenteCamion IS NOT NULL THEN
+    INSERT INTO Alertas (patente, fecha, motivo)
+    VALUES (patenteCamion, fechaActual, 'Exceso de peso');
+  END IF;
+END //
+DELIMITER ;
+DELIMITER //
+CREATE PROCEDURE RegistrarMantenimiento(IN estacionId INT, IN descripcion TEXT)
+BEGIN
+  INSERT INTO Mantenimientos (fecha, descripcion, id_estacion)
+  VALUES (CURDATE(), descripcion, estacionId);
+END //
+DELIMITER ;
+DELIMITER //
+CREATE TRIGGER auditoria_insert_pesaje
+AFTER INSERT ON Pesajes
+FOR EACH ROW
+BEGIN
+  INSERT INTO Auditorias (tabla_afectada, id_usuario, fecha_hora, accion)
+  VALUES ('Pesajes', NULL, NOW(), 'INSERT');
+END //
+DELIMITER ;
+DELIMITER //
+CREATE TRIGGER auditoria_insert_sancion
+AFTER INSERT ON Sanciones
+FOR EACH ROW
+BEGIN
+  INSERT INTO Auditorias (tabla_afectada, id_usuario, fecha_hora, accion)
+  VALUES ('Sanciones', NULL, NOW(), 'INSERT');
+END //
+DELIMITER ;
+
+CREATE VIEW VistaSancionesPorEstacion AS
+SELECT e.nombre AS estacion, SUM(s.monto) AS total_sanciones
+FROM Sanciones s
+JOIN Pesajes p ON s.pesaje_id = p.id
+JOIN Estaciones e ON p.estacion_id = e.id
+GROUP BY e.nombre;
+
+CREATE VIEW VistaCamionesReincidentes AS
+SELECT c.patente, COUNT(*) AS cantidad_infracciones
+FROM Camiones c
+JOIN Pesajes p ON c.id = p.camion_id
+WHERE p.exceso_peso = TRUE
+GROUP BY c.patente
+HAVING COUNT(*) > 1;
+
+CREATE VIEW VistaMantenimientosRecientes AS
+SELECT m.*, e.nombre AS estacion
+FROM Mantenimientos m
+JOIN Estaciones e ON m.id_estacion = e.id
+WHERE m.fecha >= CURDATE() - INTERVAL 30 DAY;
+
+CREATE VIEW VistaPesajesTotales AS
+SELECT c.tipo, COUNT(p.id) AS total_pesajes, SUM(p.resultado) AS peso_total
+FROM Camiones c
+JOIN Pesajes p ON c.id = p.camion_id
+GROUP BY c.tipo;
+
+
+
